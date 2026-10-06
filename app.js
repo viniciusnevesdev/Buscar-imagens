@@ -1,1 +1,65 @@
-const $=(s,r=document)=>r.querySelector(s);const results=$('#results'),status=$('#status'),empty=$('#emptyState'),more=$('#moreButton'),historyWrap=$('#historyWrap');let start=1,lastQuery='',currentItem=null;const config=()=>({key:localStorage.getItem('google-api-key')||'',cx:localStorage.getItem('google-cx')||''});const setStatus=m=>status.textContent=m||'';const saved=(k,fallback)=>JSON.parse(localStorage.getItem(k)||JSON.stringify(fallback));const store=(k,v)=>localStorage.setItem(k,JSON.stringify(v));const searchUrl=q=>'https://www.google.com/search?tbm=isch&q='+encodeURIComponent(q);function filters(){return {size:$('#sizeFilter').value,type:$('#typeFilter').value,format:$('#formatFilter').value,orientation:$('#orientationFilter').value,color:$('#colorFilter').value}}function activeFilterCount(){return Object.values(filters()).filter(Boolean).length}function updateFilterCount(){const n=activeFilterCount();$('#filterCount').textContent=n?'('+n+')':''}function drawHistory(){const items=saved('image-history',[]);$('#history').innerHTML='';historyWrap.classList.toggle('hidden',!items.length);items.forEach(q=>{const b=document.createElement('button');b.className='chip';b.textContent=q;b.onclick=()=>{$('#query').value=q;newSearch(q)};$('#history').append(b)})}function remember(q){let h=saved('image-history',[]).filter(x=>x!==q);h.unshift(q);store('image-history',h.slice(0,8));drawHistory()}function showSettings(){const c=config();$('#apiKey').value=c.key;$('#cx').value=c.cx;$('#settingsDialog').showModal()}$('#settingsButton').onclick=showSettings;$('#settingsForm').addEventListener('submit',e=>{e.preventDefault();localStorage.setItem('google-api-key',$('#apiKey').value.trim());localStorage.setItem('google-cx',$('#cx').value.trim());$('#settingsDialog').close();setStatus('Configuração salva neste aparelho.')});$('#clearSettings').onclick=()=>{localStorage.removeItem('google-api-key');localStorage.removeItem('google-cx');$('#apiKey').value='';$('#cx').value='';setStatus('Configuração removida.')};$('#filtersButton').onclick=()=>$('#filtersPanel').classList.toggle('hidden');document.querySelectorAll('.filters select').forEach(el=>el.onchange=()=>{updateFilterCount();if(lastQuery)newSearch(lastQuery)});$('#openGoogle').onclick=()=>{const q=$('#query').value.trim()||lastQuery;if(!q){setStatus('Digite uma busca primeiro.');$('#query').focus();return}window.open(searchUrl(q),'_blank','noopener')};$('#searchForm').addEventListener('submit',e=>{e.preventDefault();const q=$('#query').value.trim();if(q)newSearch(q)});function newSearch(q){lastQuery=q;start=1;results.innerHTML='';remember(q);search(q)}more.onclick=()=>search(lastQuery);function localFilter(items){const f=filters();return items.filter(x=>{const w=Number(x.image?.width)||0,h=Number(x.image?.height)||0;if(f.size==='min-1920'&&w<1920&&h<1920)return false;if(f.orientation==='vertical'&&h<=w)return false;if(f.orientation==='horizontal'&&w<=h)return false;if(f.orientation==='square'&&Math.abs(w-h)>Math.max(w,h)*.12)return false;return true})}async function search(q){const {key,cx}=config();empty.classList.add('hidden');more.classList.add('hidden');if(!key||!cx){setStatus('Conecte sua busca do Google para ver os resultados dentro do app.');showSettings();return}setStatus('Buscando imagens…');const f=filters(),p=new URLSearchParams({key,cx,q,searchType:'image',num:'10',start:String(start),safe:'active'});if(['large','medium','icon'].includes(f.size))p.set('imgSize',f.size);if(f.type)p.set('imgType',f.type);if(f.format)p.set('fileType',f.format);if(f.color==='trans')p.set('imgColorType','trans');else if(f.color)p.set('imgDominantColor',f.color);try{const r=await fetch('https://www.googleapis.com/customsearch/v1?'+p),data=await r.json();if(!r.ok)throw new Error(data.error?.message||'Não foi possível pesquisar.');const items=localFilter(data.items||[]);render(items);if(!items.length)setStatus('Nenhuma imagem nesta página com esses filtros.');else{setStatus(items.length+' imagem(ns) encontradas.');start+=10;if(data.queries?.nextPage)more.classList.remove('hidden')}}catch(err){setStatus(err.message.includes('API key')?'A chave da API não foi aceita. Confira a configuração.':err.message)}}function render(items){const t=$('#imageTemplate');for(const item of items){const n=t.content.cloneNode(true),img=$('img',n),card=$('.image-link',n),dl=$('.download',n);img.src=item.image.thumbnailLink;img.alt=item.title||'Imagem encontrada';$('.dimensions',n).textContent=(item.image.width||'?')+' × '+(item.image.height||'?');card.onclick=()=>preview(item);dl.onclick=e=>{e.stopPropagation();download(item.link,item.title||'imagem')};results.append(n)}}function preview(item){currentItem=item;$('#previewImage').src=item.link;$('#previewImage').alt=item.title||'Imagem';$('#previewTitle').textContent=item.title||'Imagem';$('#previewDimensions').textContent=(item.image.width||'?')+' × '+(item.image.height||'?');$('#previewSource').textContent=new URL(item.link).hostname;$('#originalLink').href=item.link;$('#collectionName').value='Favoritos';refreshFavoriteButton();$('#previewDialog').showModal()}$('#closePreview').onclick=()=>$('#previewDialog').close();$('#previewDownload').onclick=()=>currentItem&&download(currentItem.link,currentItem.title||'imagem');function bookmarks(){return saved('image-bookmarks',[])}function isSaved(url){return bookmarks().some(x=>x.link===url)}function refreshFavoriteButton(){const b=$('#favoriteButton'),yes=currentItem&&isSaved(currentItem.link);b.textContent=yes?'♥ Salvo':'♡ Salvar'}$('#favoriteButton').onclick=()=>{if(!currentItem)return;let all=bookmarks(),found=all.find(x=>x.link===currentItem.link);if(found){all=all.filter(x=>x.link!==currentItem.link);setStatus('Removida dos favoritos.')}else{all.unshift({link:currentItem.link,thumbnail:currentItem.image.thumbnailLink,title:currentItem.title||'Imagem',dimensions:(currentItem.image.width||'?')+' × '+(currentItem.image.height||'?'),collection:$('#collectionName').value.trim()||'Favoritos'});setStatus('Imagem salva localmente.')}store('image-bookmarks',all);refreshFavoriteButton()};$('#favoritesButton').onclick=()=>{drawFavorites();$('#favoritesDialog').showModal()};$('#closeFavorites').onclick=()=>$('#favoritesDialog').close();function drawFavorites(){const list=$('#favoritesList'),all=bookmarks();list.innerHTML='';if(!all.length){list.textContent='Nenhuma imagem salva ainda.';return}all.forEach((x,i)=>{const el=document.createElement('article');el.className='favorite-item';el.innerHTML='<img src="'+x.thumbnail+'" alt=""><div><strong>'+escapeHtml(x.title)+'</strong><small>'+escapeHtml(x.collection)+' · '+x.dimensions+'</small></div><button class="remove">Remover</button>';el.querySelector('img').onclick=()=>window.open(x.link,'_blank','noopener');el.querySelector('.remove').onclick=()=>{all.splice(i,1);store('image-bookmarks',all);drawFavorites()};list.append(el)})}function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}async function download(url,title){try{const r=await fetch(url,{mode:'cors'});if(!r.ok)throw 0;const blob=await r.blob(),file=new File([blob],title.replace(/[\\/:*?"<>|]/g,'-')+'.'+(blob.type.split('/')[1]||'jpg'),{type:blob.type});if(navigator.canShare?.({files:[file]})){await navigator.share({files:[file],title:'Salvar imagem'});return}const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=file.name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch{window.open(url,'_blank','noopener');setStatus('A imagem abriu em outra aba. No iPhone, toque e segure nela e escolha “Salvar em Fotos”.')}}drawHistory();updateFilterCount();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js');
+const $=(selector,root=document)=>root.querySelector(selector);
+const status=$('#status');
+const historyWrap=$('#historyWrap');
+let cseReady=false;
+let pendingQuery='';
+
+const setStatus=(message='')=>status.textContent=message;
+const saved=(key,fallback)=>JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback));
+const store=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
+const searchUrl=query=>'https://www.google.com/search?tbm=isch&q='+encodeURIComponent(query);
+
+function drawHistory(){
+  const items=saved('image-history',[]);
+  const holder=$('#history');
+  holder.innerHTML='';
+  historyWrap.classList.toggle('hidden',!items.length);
+  items.forEach(query=>{
+    const button=document.createElement('button');
+    button.type='button';
+    button.className='chip';
+    button.textContent=query;
+    button.onclick=()=>{ $('#query').value=query; runSearch(query); };
+    holder.append(button);
+  });
+}
+function remember(query){
+  const history=saved('image-history',[]).filter(item=>item!==query);
+  history.unshift(query);
+  store('image-history',history.slice(0,8));
+  drawHistory();
+}
+function runSearch(query){
+  if(!cseReady){
+    pendingQuery=query;
+    setStatus('Aguarde um instante: preparando a busca do Google…');
+    return;
+  }
+  const element=window.google?.search?.cse?.element?.getElement('pwaImages');
+  if(!element){
+    setStatus('A busca do Google ainda está carregando. Tente novamente em alguns segundos.');
+    return;
+  }
+  remember(query);
+  setStatus('');
+  element.execute(query);
+}
+window.addEventListener('pwa-cse-ready',()=>{
+  cseReady=true;
+  setStatus('');
+  if(pendingQuery){const query=pendingQuery;pendingQuery='';runSearch(query);}
+});
+$('#searchForm').addEventListener('submit',event=>{
+  event.preventDefault();
+  const query=$('#query').value.trim();
+  if(query)runSearch(query);
+});
+$('#openGoogle').onclick=()=>{
+  const query=$('#query').value.trim();
+  if(!query){setStatus('Digite uma busca primeiro.');$('#query').focus();return;}
+  window.open(searchUrl(query),'_blank','noopener');
+};
+$('#helpButton').onclick=()=>$('#helpDialog').showModal();
+$('#closeHelp').onclick=()=>$('#helpDialog').close();
+drawHistory();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js');
